@@ -208,6 +208,151 @@ VkDevice createDevice(VkPhysicalDevice physicalDevice, uint32_t familyIndex)
     return device;
 }
 
+VkShaderModule loadShader(VkDevice device, const char* path)
+{
+    FILE* file = fopen(path, "rb");
+    assert(file);
+
+    fseek(file, 0, SEEK_END);
+    long len = ftell(file);
+    assert(len >= 0);
+    fseek(file, 0, SEEK_SET);
+
+    char* buf = calloc(len, sizeof(char));
+    assert(buf);
+
+    size_t rc = fread(buf, 1, len, file);
+    assert(rc == (size_t) len);
+    fclose(file);
+
+    const VkShaderModuleCreateInfo createInfo =
+    {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pCode = (uint32_t*) buf,
+        .codeSize = len,
+    };
+
+    VkShaderModule shaderModule = 0;
+    VK_CHECK(vkCreateShaderModule(device, &createInfo, 0, &shaderModule));
+
+    free(buf);
+
+    return shaderModule;
+}
+
+VkPipelineLayout createPipelineLayout(VkDevice device)
+{
+    const VkPipelineLayoutCreateInfo createInfo =
+    {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+    };
+
+    VkPipelineLayout layout = 0;
+    VK_CHECK(vkCreatePipelineLayout(device, &createInfo, 0, &layout));
+
+    return layout;
+}
+
+VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, VkShaderModule vs, VkShaderModule fs, VkPipelineLayout layout)
+{
+    const VkPipelineShaderStageCreateInfo stages[] =
+    {
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_VERTEX_BIT,
+            .module = vs,
+            .pName = "main",
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .module = fs,
+            .pName = "main",
+        },
+    };
+
+    const VkPipelineVertexInputStateCreateInfo vertexInput =
+    {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    };
+
+    const VkPipelineInputAssemblyStateCreateInfo inputAssembly =
+    {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+    };
+
+    const VkPipelineViewportStateCreateInfo viewportState =
+    {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1,
+        .scissorCount = 1,
+    };
+
+    const VkPipelineRasterizationStateCreateInfo rasterizationState =
+    {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .lineWidth = 1.0f,
+    };
+
+    const VkPipelineMultisampleStateCreateInfo multisampleState =
+    {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+    };
+
+    const VkPipelineDepthStencilStateCreateInfo depthStencilState =
+    {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+    };
+
+    const VkPipelineColorBlendAttachmentState colorAttachmentState =
+    {
+        .colorWriteMask =   VK_COLOR_COMPONENT_R_BIT |
+                            VK_COLOR_COMPONENT_G_BIT |
+                            VK_COLOR_COMPONENT_B_BIT |
+                            VK_COLOR_COMPONENT_A_BIT,
+    };
+
+    const VkPipelineColorBlendStateCreateInfo colorBlendState =
+    {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .attachmentCount = 1,
+        .pAttachments = &colorAttachmentState,
+    };
+
+    const VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+
+    const VkPipelineDynamicStateCreateInfo dynamicState =
+    {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = countof(dynamicStates),
+        .pDynamicStates = dynamicStates,
+    };
+
+    const VkGraphicsPipelineCreateInfo createInfo =
+    {
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .stageCount = countof(stages),
+        .pStages = stages,
+        .pVertexInputState = &vertexInput,
+        .pInputAssemblyState = &inputAssembly,
+        .pViewportState = &viewportState,
+        .pRasterizationState = &rasterizationState,
+        .pMultisampleState = &multisampleState,
+        .pDepthStencilState = &depthStencilState,
+        .pColorBlendState = &colorBlendState,
+        .pDynamicState = &dynamicState,
+        .layout = layout,
+        .renderPass = renderPass,
+    };
+
+    VkPipeline pipeline = 0;
+    VK_CHECK(vkCreateGraphicsPipelines(device, pipelineCache, 1, &createInfo, 0, &pipeline));
+
+    return pipeline;
+}
+
 VkSurfaceKHR createSurface(VkInstance instance, GLFWwindow* window)
 {
     const VkWin32SurfaceCreateInfoKHR createInfo =
@@ -421,6 +566,21 @@ int main(int argc, char* argv[])
     VkRenderPass renderPass = createRenderPass(device, surfaceFormat);
     assert(renderPass);
 
+    VkShaderModule triangleVS = loadShader(device, "bin/trig.vert.spv");
+    assert(triangleVS);
+    
+    VkShaderModule triangleFS = loadShader(device, "bin/trig.frag.spv");
+    assert(triangleFS);
+
+    // TODO: this is critical for performance!
+    VkPipelineCache pipelineCache = 0;
+
+    VkPipelineLayout triangleLayout = createPipelineLayout(device);
+    assert(triangleLayout);
+
+    VkPipeline trianglePipeline = createGraphicsPipeline(device, pipelineCache, renderPass, triangleVS, triangleFS, triangleLayout);
+    assert(trianglePipeline);
+
     int windowWidth, windowHeight;
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
 
@@ -486,7 +646,7 @@ int main(int argc, char* argv[])
 
         VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
-        const VkClearColorValue color = { 1, 0, 1, 1 };
+        const VkClearColorValue color = { 48.f / 255.f, 10.f / 255.f, 36.f / 255.f, 1 };
         const VkClearValue clearColor = { color };
 
         const VkRenderPassBeginInfo passBeginInfo =
@@ -505,8 +665,12 @@ int main(int argc, char* argv[])
         VkViewport viewport = { 0, 0, (float) windowWidth, (float) windowHeight, 0, 1 };
         VkRect2D scissor = { {0, 0}, {windowWidth, windowHeight} };
 
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, trianglePipeline);
+
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 
         vkCmdEndRenderPass(commandBuffer);
 
@@ -563,6 +727,12 @@ int main(int argc, char* argv[])
 
     free(swapchainImages);
     vkDestroySwapchainKHR(device, swapchain, 0);
+
+    vkDestroyPipeline(device, trianglePipeline, 0);
+    vkDestroyPipelineLayout(device, triangleLayout, 0);
+    vkDestroyShaderModule(device, triangleFS, 0);
+    vkDestroyShaderModule(device, triangleVS, 0);
+
     vkDestroyRenderPass(device, renderPass, 0);
     vkDestroySurfaceKHR(instance, surface, 0);
 
