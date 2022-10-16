@@ -85,9 +85,28 @@ VkBool32 VKAPI_CALL debugReportCallback(
     void*                                       pUserData
 )
 {
-    (void) flags, objectType, object, location, messageCode, pLayerPrefix, pUserData;
+    (void) objectType, object, location, messageCode, pLayerPrefix, pUserData;
 
-    printf(pMessage);
+    if (flags & VK_DEBUG_REPORT_WARNING_BIT_EXT)
+        return VK_FALSE;
+
+    const char* type =
+        (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT)
+        ? "ERROR"
+        : (flags & VK_DEBUG_REPORT_WARNING_BIT_EXT)
+            ? "WARNING"
+            : "INFO";
+
+    printf("[%s]: %s\n", type, pMessage);
+
+#ifdef _WIN32
+    OutputDebugStringA(type);
+    OutputDebugStringA(pMessage);
+#endif
+
+    if (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT)
+        assert(!"Validation error encountered!");
+
     return VK_FALSE;
 }
 
