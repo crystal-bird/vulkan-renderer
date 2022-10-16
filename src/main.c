@@ -4,21 +4,24 @@
 #include <stdint.h>
 #include <assert.h>
 
-#define GLFW_EXPOSE_NATIVE_WIN32
+#ifdef _WIN32
+    #define GLFW_EXPOSE_NATIVE_WIN32
+    #define VK_USE_PLATFORM_WIN32_KHR
+#endif
+
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 
-#define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan.h>
 
 #define countof(arr) sizeof(arr) / sizeof(arr[0])
 
 #ifndef NDEBUG
 #define VK_CHECK(call) \
-        { \
-            VkResult result_ = (call); \
-            assert(result_ == VK_SUCCESS); \
-        }
+    { \
+        VkResult result_ = (call); \
+        assert(result_ == VK_SUCCESS); \
+    }
 #else
 #define VK_CHECK(call) call
 #endif
