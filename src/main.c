@@ -13,7 +13,7 @@
 
 #define countof(arr) sizeof(arr) / sizeof(arr[0])
 
-#ifdef _DEBUG
+#ifndef NDEBUG
 #define VK_CHECK(call) \
         { \
             VkResult result_ = (call); \
@@ -34,8 +34,13 @@ VkInstance createInstance(void)
     static const char* extensions[] =
     {
         VK_KHR_SURFACE_EXTENSION_NAME,
+
 #ifdef VK_USE_PLATFORM_WIN32_KHR
         VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+#endif
+
+#ifndef NDEBUG
+        VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
 #endif
     };
 
@@ -63,6 +68,44 @@ VkInstance createInstance(void)
 
     return instance;
 }
+
+#ifndef NDEBUG
+
+VkBool32 VKAPI_CALL debugReportCallback(
+    VkDebugReportFlagsEXT                       flags,
+    VkDebugReportObjectTypeEXT                  objectType,
+    uint64_t                                    object,
+    size_t                                      location,
+    int32_t                                     messageCode,
+    const char*                                 pLayerPrefix,
+    const char*                                 pMessage,
+    void*                                       pUserData
+)
+{
+    (void) flags, objectType, object, location, messageCode, pLayerPrefix, pUserData;
+
+    printf(pMessage);
+    return VK_FALSE;
+}
+
+VkDebugReportCallbackEXT registerDebugCallback(VkInstance instance)
+{
+    const VkDebugReportCallbackCreateInfoEXT createInfo =
+    {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT,
+        .pfnCallback = debugReportCallback,
+    };
+
+    PFN_vkCreateDebugReportCallbackEXT vkCreateDebugReportCallbackEXT =
+        (PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugReportCallbackEXT");
+
+    VkDebugReportCallbackEXT debugCallback = 0;
+    VK_CHECK(vkCreateDebugReportCallbackEXT(instance, &createInfo, 0, &debugCallback));
+
+    return debugCallback;
+}
+
+#endif
 
 VkPhysicalDevice pickPhysicalDevice(VkInstance instance)
 {
@@ -328,6 +371,11 @@ int main(int argc, char* argv[])
     VkInstance instance = createInstance();
     assert(instance);
 
+#ifndef NDEBUG
+    VkDebugReportCallbackEXT debugCallback = registerDebugCallback(instance);
+    assert(debugCallback);
+#endif
+
     VkPhysicalDevice physicalDevice = pickPhysicalDevice(instance);
     assert(physicalDevice);
 
@@ -498,6 +546,14 @@ int main(int argc, char* argv[])
     glfwDestroyWindow(window);
 
     vkDestroyDevice(device, 0);
+
+#ifndef NDEBUG
+    PFN_vkDestroyDebugReportCallbackEXT vkDestroyDebugReportCallbackEXT =
+        (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugReportCallbackEXT");
+
+    vkDestroyDebugReportCallbackEXT(instance, debugCallback, 0);
+#endif
+
     vkDestroyInstance(instance, 0);
 
     glfwTerminate();
