@@ -115,6 +115,7 @@ VkDebugReportCallbackEXT registerDebugCallback(VkInstance instance)
     const VkDebugReportCallbackCreateInfoEXT createInfo =
     {
         .sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT,
+        .flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT,
         .pfnCallback = debugReportCallback,
     };
 
