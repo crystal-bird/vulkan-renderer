@@ -171,6 +171,50 @@ VkFormat getSurfaceFormat(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface)
     return format;
 }
 
+VkRenderPass createRenderPass(VkDevice device, VkFormat format)
+{
+    const VkAttachmentDescription attachments[] =
+    {
+        {
+            .format = format,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        }
+    };
+
+    const VkAttachmentReference colorAttachment =
+    {
+        .attachment = 0,
+        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+
+    const VkSubpassDescription subpass =
+    {
+        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &colorAttachment,
+    };
+
+    const VkRenderPassCreateInfo createInfo =
+    {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .attachmentCount = countof(attachments),
+        .pAttachments = attachments,
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+    };
+
+    VkRenderPass renderPass = 0;
+    vkCreateRenderPass(device, &createInfo, 0, &renderPass);
+
+    return renderPass;
+}
+
 VkSwapchainKHR createSwapchain(VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, VkFormat format, uint32_t width, uint32_t height)
 {
     const VkSwapchainCreateInfoKHR createInfo =
@@ -210,6 +254,54 @@ VkSemaphore createSemaphore(VkDevice device)
     return semaphore;
 }
 
+VkImage* getSwapchainImages(VkDevice device, VkSwapchainKHR swapchain, uint32_t* pSwapchainImageCount)
+{
+    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, pSwapchainImageCount, 0));
+    
+    VkImage* swapchainImages = calloc(*pSwapchainImageCount, sizeof(*swapchainImages));
+    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, pSwapchainImageCount, swapchainImages));
+
+    return swapchainImages;
+}
+
+VkImageView createImageView(VkDevice device, VkImage image, VkFormat format)
+{
+    const VkImageViewCreateInfo createInfo =
+    {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = image,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = format,
+        .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .subresourceRange.levelCount = 1,
+        .subresourceRange.layerCount = 1,
+    };
+
+    VkImageView imageView = 0;
+    VK_CHECK(vkCreateImageView(device, &createInfo, 0, &imageView));
+
+    return imageView;
+}
+
+VkFramebuffer createFramebuffer(VkDevice device, VkRenderPass renderPass, VkImageView imageView, uint32_t width, uint32_t height)
+{
+    const VkFramebufferCreateInfo createInfo =
+    {
+        .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+        .renderPass = renderPass,
+        .attachmentCount = 1,
+        .pAttachments = &imageView,
+        .width = width,
+        .height = height,
+        .layers = 1,
+    };
+
+    VkFramebuffer framebuffer = 0;
+    VK_CHECK(vkCreateFramebuffer(device, &createInfo, 0, &framebuffer));
+
+    return framebuffer;
+}
+
 VkCommandPool createCommandPool(VkDevice device, uint32_t familyIndex)
 {
     const VkCommandPoolCreateInfo createInfo =
@@ -223,16 +315,6 @@ VkCommandPool createCommandPool(VkDevice device, uint32_t familyIndex)
     VK_CHECK(vkCreateCommandPool(device, &createInfo, 0, &commandPool));
 
     return commandPool;
-}
-
-VkImage* getSwapchainImages(VkDevice device, VkSwapchainKHR swapchain, uint32_t* pSwapchainImageCount)
-{
-    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, pSwapchainImageCount, 0));
-    
-    VkImage* swapchainImages = calloc(*pSwapchainImageCount, sizeof(*swapchainImages));
-    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, pSwapchainImageCount, swapchainImages));
-
-    return swapchainImages;
 }
 
 int main(int argc, char* argv[])
@@ -263,10 +345,13 @@ int main(int argc, char* argv[])
     VkSurfaceKHR surface = createSurface(instance, window);
     assert(surface);
 
+    VkFormat surfaceFormat = getSurfaceFormat(physicalDevice, surface);
+
+    VkRenderPass renderPass = createRenderPass(device, surfaceFormat);
+    assert(renderPass);
+
     int windowWidth, windowHeight;
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
-
-    VkFormat surfaceFormat = getSurfaceFormat(physicalDevice, surface);
 
     VkSwapchainKHR swapchain = createSwapchain(device, surface, familyIndex, surfaceFormat, windowWidth, windowHeight);
     assert(swapchain);
@@ -283,6 +368,20 @@ int main(int argc, char* argv[])
     uint32_t swapchainImageCount = 0;
     VkImage* swapchainImages = getSwapchainImages(device, swapchain, &swapchainImageCount);
     assert(swapchainImages);
+
+    VkImageView* swapchainImageViews = calloc(swapchainImageCount, sizeof(*swapchainImageViews));
+    for (uint32_t i = 0; i < swapchainImageCount; i++)
+    {
+        swapchainImageViews[i] = createImageView(device, swapchainImages[i], surfaceFormat);
+        assert(swapchainImageViews[i]);
+    }
+
+    VkFramebuffer* swapchainFramebuffers = calloc(swapchainImageCount, sizeof(*swapchainFramebuffers));
+    for (uint32_t i = 0; i < swapchainImageCount; i++)
+    {
+        swapchainFramebuffers[i] = createFramebuffer(device, renderPass, swapchainImageViews[i], windowWidth, windowHeight);
+        assert(swapchainFramebuffers[i]);
+    }
 
     VkCommandPool commandPool = createCommandPool(device, familyIndex);
     assert(commandPool);
@@ -317,15 +416,28 @@ int main(int argc, char* argv[])
         VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
 
         const VkClearColorValue color = { 1, 0, 1, 1 };
+        const VkClearValue clearColor = { color };
 
-        const VkImageSubresourceRange range = 
+        const VkRenderPassBeginInfo passBeginInfo =
         {
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .levelCount = 1,
-            .layerCount = 1,
+            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+            .renderPass = renderPass,
+            .framebuffer = swapchainFramebuffers[imageIndex],
+            .renderArea.extent.width = windowWidth,
+            .renderArea.extent.height = windowHeight,
+            .clearValueCount = 1,
+            .pClearValues = &clearColor,
         };
 
-        vkCmdClearColorImage(commandBuffer, swapchainImages[imageIndex], VK_IMAGE_LAYOUT_GENERAL, &color, 1, &range);
+        vkCmdBeginRenderPass(commandBuffer, &passBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkViewport viewport = { 0, 0, (float) windowWidth, (float) windowHeight, 0, 1 };
+        VkRect2D scissor = { {0, 0}, {windowWidth, windowHeight} };
+
+        vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+        vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+        vkCmdEndRenderPass(commandBuffer);
 
         VK_CHECK(vkEndCommandBuffer(commandBuffer));
 
@@ -366,7 +478,21 @@ int main(int argc, char* argv[])
     vkDestroySemaphore(device, acquireSemaphore, 0);
     vkDestroySemaphore(device, releaseSemaphore, 0);
 
+    for (uint32_t i = 0; i < swapchainImageCount; i++)
+    {
+        vkDestroyFramebuffer(device, swapchainFramebuffers[i], 0);
+    }
+    free(swapchainFramebuffers);
+
+    for (uint32_t i = 0; i < swapchainImageCount; i++)
+    {
+        vkDestroyImageView(device, swapchainImageViews[i], 0);
+    }
+    free(swapchainImageViews);
+
+    free(swapchainImages);
     vkDestroySwapchainKHR(device, swapchain, 0);
+    vkDestroyRenderPass(device, renderPass, 0);
     vkDestroySurfaceKHR(instance, surface, 0);
 
     glfwDestroyWindow(window);
