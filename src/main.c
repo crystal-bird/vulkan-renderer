@@ -91,14 +91,33 @@ VkPhysicalDevice pickPhysicalDevice(VkInstance instance)
     return physicalDevice;
 }
 
-VkDevice createDevice(VkPhysicalDevice physicalDevice, uint32_t* pFamilyIndex)
+uint32_t getGraphicsQueueFamily(VkPhysicalDevice physicalDevice)
 {
-    *pFamilyIndex = 0; /* SHORTCUT!! DONT DO THIS!! */
+    uint32_t queueCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueCount, 0);
 
+    VkQueueFamilyProperties* queues = calloc(queueCount, sizeof(*queues));
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueCount, queues);
+
+    uint32_t familyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+    for (uint32_t i = 0; i < queueCount; i++)
+        if (queues[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+        {
+            familyIndex = i;
+            break;
+        }
+
+    free(queues);
+    return familyIndex;
+}
+
+VkDevice createDevice(VkPhysicalDevice physicalDevice, uint32_t familyIndex)
+{
     const VkDeviceQueueCreateInfo queueInfo =
     {
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .queueFamilyIndex = *pFamilyIndex,
+        .queueFamilyIndex = familyIndex,
         .queueCount = 1,
         .pQueuePriorities = (float[]){1.0f},
     };
@@ -138,14 +157,28 @@ VkSurfaceKHR createSurface(VkInstance instance, GLFWwindow* window)
     return surface;
 }
 
-VkSwapchainKHR createSwapchain(VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, uint32_t width, uint32_t height)
+VkFormat getSurfaceFormat(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface)
+{
+    uint32_t formatCount = 0;
+    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, 0));
+
+    VkSurfaceFormatKHR* formats = calloc(formatCount, sizeof(*formats));
+    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, formats));
+
+    VkFormat format = formats[0].format;
+    free(formats);
+    
+    return format;
+}
+
+VkSwapchainKHR createSwapchain(VkDevice device, VkSurfaceKHR surface, uint32_t familyIndex, VkFormat format, uint32_t width, uint32_t height)
 {
     const VkSwapchainCreateInfoKHR createInfo =
     {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface = surface,
         .minImageCount = 2,
-        .imageFormat = VK_FORMAT_B8G8R8A8_UNORM, // SHORTCUT
+        .imageFormat = format,
         .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
         .imageExtent.width = width,
         .imageExtent.height = height,
@@ -153,6 +186,8 @@ VkSwapchainKHR createSwapchain(VkDevice device, VkSurfaceKHR surface, uint32_t f
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
         .queueFamilyIndexCount = 1,
         .pQueueFamilyIndices = &familyIndex,
+        .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
         .presentMode = VK_PRESENT_MODE_FIFO_KHR,
     };
 
@@ -214,8 +249,10 @@ int main(int argc, char* argv[])
     VkPhysicalDevice physicalDevice = pickPhysicalDevice(instance);
     assert(physicalDevice);
 
-    uint32_t familyIndex = 0;
-    VkDevice device = createDevice(physicalDevice, &familyIndex);
+    uint32_t familyIndex = getGraphicsQueueFamily(physicalDevice);
+    assert(familyIndex != VK_QUEUE_FAMILY_IGNORED);
+
+    VkDevice device = createDevice(physicalDevice, familyIndex);
     assert(device);
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -229,7 +266,9 @@ int main(int argc, char* argv[])
     int windowWidth, windowHeight;
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
 
-    VkSwapchainKHR swapchain = createSwapchain(device, surface, familyIndex, windowWidth, windowHeight);
+    VkFormat surfaceFormat = getSurfaceFormat(physicalDevice, surface);
+
+    VkSwapchainKHR swapchain = createSwapchain(device, surface, familyIndex, surfaceFormat, windowWidth, windowHeight);
     assert(swapchain);
 
     VkSemaphore acquireSemaphore = createSemaphore(device);
