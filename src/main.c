@@ -250,6 +250,69 @@ VkPipelineLayout createPipelineLayout(VkDevice device)
     return layout;
 }
 
+typedef struct
+{
+    float position[3];
+    float normal[3];
+    float texcoord[2];
+} Vertex;
+
+typedef struct
+{
+    VkBuffer        buffer;
+    VkDeviceMemory  memory;
+    void*           data;
+    size_t          size;
+} Buffer;
+
+uint32_t selectMemoryType(const VkPhysicalDeviceMemoryProperties* memProps, uint32_t memTypeBits, VkMemoryPropertyFlags flags)
+{
+    for (uint32_t i = 0; i < memProps->memoryTypeCount; i++)
+        if ((memTypeBits & (1 << i)) != 0 && (memProps->memoryTypes[i].propertyFlags & flags) == flags)
+            return i;
+
+    assert(!"No compatible memory type found!");
+    return ~0u;
+}
+
+void createBuffer(Buffer* buffer, VkDevice device, const VkPhysicalDeviceMemoryProperties* memProps, size_t size, VkBufferUsageFlags usage)
+{
+    const VkBufferCreateInfo createInfo =
+    {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = size,
+        .usage = usage,
+    };
+
+    VK_CHECK(vkCreateBuffer(device, &createInfo, 0, &buffer->buffer));
+
+    VkMemoryRequirements memReq;
+    vkGetBufferMemoryRequirements(device, buffer->buffer, &memReq);
+
+    uint32_t memTypeIndex = selectMemoryType(memProps, memReq.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    assert(memTypeIndex != ~0u);
+
+    const VkMemoryAllocateInfo allocateInfo =
+    {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = memReq.size,
+        .memoryTypeIndex = memTypeIndex,
+    };
+
+    VK_CHECK(vkAllocateMemory(device, &allocateInfo, 0, &buffer->memory));
+    VK_CHECK(vkBindBufferMemory(device, buffer->buffer, buffer->memory, 0));
+
+    VK_CHECK(vkMapMemory(device, buffer->memory, 0, size, 0, &buffer->data));
+
+    buffer->size = size;
+}
+
+void destroyBuffer(VkDevice device, Buffer* buffer)
+{
+    vkFreeMemory(device, buffer->memory, 0);
+    vkDestroyBuffer(device, buffer->buffer, 0);
+}
+
 VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache, VkRenderPass renderPass, VkShaderModule vs, VkShaderModule fs, VkPipelineLayout layout)
 {
     const VkPipelineShaderStageCreateInfo stages[] =
@@ -268,9 +331,39 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
         },
     };
 
+    const VkVertexInputBindingDescription stream =
+    {
+        .binding = 0,
+        .stride = sizeof(Vertex),
+        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+    };
+
+    const VkVertexInputAttributeDescription attrs[] =
+    {
+        {
+            .location = 0,
+            .format = VK_FORMAT_R32G32B32_SFLOAT,
+            .offset = offsetof(Vertex, position),
+        },
+        {
+            .location = 1,
+            .format = VK_FORMAT_R32G32B32_SFLOAT,
+            .offset = offsetof(Vertex, normal),
+        },
+        {
+            .location = 2,
+            .format = VK_FORMAT_R32G32_SFLOAT,
+            .offset = offsetof(Vertex, texcoord),
+        },
+    };
+
     const VkPipelineVertexInputStateCreateInfo vertexInput =
     {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .vertexBindingDescriptionCount = 1,
+        .pVertexBindingDescriptions = &stream,
+        .vertexAttributeDescriptionCount = countof(attrs),
+        .pVertexAttributeDescriptions = attrs,
     };
 
     const VkPipelineInputAssemblyStateCreateInfo inputAssembly =
@@ -609,7 +702,7 @@ int main(int argc, char* argv[])
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    
+
     GLFWwindow* window = glfwCreateWindow(1600, 900, "Vulkan Renderer", 0, 0);
     assert(window);
 
@@ -654,8 +747,6 @@ int main(int argc, char* argv[])
     VkCommandPool commandPool = createCommandPool(device, familyIndex);
     assert(commandPool);
 
-    glfwShowWindow(window);
-
     const VkCommandBufferAllocateInfo allocateInfo =
     {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -666,6 +757,34 @@ int main(int argc, char* argv[])
 
     VkCommandBuffer commandBuffer = 0;
     VK_CHECK(vkAllocateCommandBuffers(device, &allocateInfo, &commandBuffer));
+
+    VkPhysicalDeviceMemoryProperties memProps;
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProps);
+
+    Buffer vb = {0};
+    createBuffer(&vb, device, &memProps, 128 * 1024 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+
+    Buffer ib = {0};
+    createBuffer(&ib, device, &memProps, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+    static const Vertex vertices[] =
+    {
+        {{-0.5f, -0.5f, 0.0f}, {0}, {0}},
+        {{ 0.5f, -0.5f, 0.0f}, {0}, {0}},
+        {{-0.5f,  0.5f, 0.0f}, {0}, {0}},
+        {{ 0.5f,  0.5f, 0.0f}, {0}, {0}},
+    };
+
+    static const unsigned int indices[] =
+    {
+        0, 1, 2,
+        1, 2, 3,
+    };
+
+    memcpy(vb.data, vertices, sizeof(vertices));
+    memcpy(ib.data, indices, sizeof(indices));
+
+    glfwShowWindow(window);
 
     while (!glfwWindowShouldClose(window))
     {
@@ -716,7 +835,10 @@ int main(int argc, char* argv[])
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+        VkDeviceSize dummyOffset = 0;
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vb.buffer, &dummyOffset);
+        vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(commandBuffer, countof(indices), 1, 0, 0, 0);
 
         vkCmdEndRenderPass(commandBuffer);
 
@@ -752,6 +874,9 @@ int main(int argc, char* argv[])
 
         VK_CHECK(vkDeviceWaitIdle(device));
     }
+
+    destroyBuffer(device, &ib);
+    destroyBuffer(device, &vb);
 
     vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
     vkDestroyCommandPool(device, commandPool, 0);
