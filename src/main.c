@@ -13,6 +13,7 @@
 #include <GLFW/glfw3native.h>
 
 #include <vulkan/vulkan.h>
+#include "fast_obj.h"
 
 #define countof(arr) sizeof(arr) / sizeof(arr[0])
 
@@ -675,6 +676,61 @@ VkCommandPool createCommandPool(VkDevice device, uint32_t familyIndex)
     return commandPool;
 }
 
+Vertex* loadObj(const char* path, size_t* pSize)
+{
+    fastObjMesh* obj = fast_obj_read(path);
+    if (!obj)
+        return 0;
+
+    size_t index_count = 0;
+
+    for (uint32_t i = 0; i < obj->face_count; i++)
+        index_count += 3 * (obj->face_vertices[i] - 2);
+
+    Vertex* vertices = calloc(index_count, sizeof(*vertices));
+    *pSize = index_count * sizeof(Vertex);
+
+    size_t vertex_offset = 0;
+    size_t index_offset = 0;
+
+    for (uint32_t i = 0; i < obj->face_count; i++)
+    {
+        for (uint32_t j = 0; j < obj->face_vertices[i]; j++)
+        {
+            fastObjIndex gi = obj->indices[index_offset + j];
+
+            // triangulate polygons on the fly
+            if (j >= 3)
+            {
+                vertices[vertex_offset + 0] = vertices[vertex_offset - 3];
+                vertices[vertex_offset + 1] = vertices[vertex_offset - 1];
+                vertex_offset += 2;
+            }
+
+            Vertex* v = &vertices[vertex_offset++];
+
+            v->position[0] = obj->positions[gi.p * 3 + 0];
+            v->position[1] = obj->positions[gi.p * 3 + 1];
+            v->position[2] = obj->positions[gi.p * 3 + 2];
+
+            v->normal[0] = obj->normals[gi.n * 3 + 0];
+            v->normal[1] = obj->normals[gi.n * 3 + 1];
+            v->normal[2] = obj->normals[gi.n * 3 + 2];
+
+            v->texcoord[0] = obj->texcoords[gi.t * 2 + 0];
+            v->texcoord[1] = obj->texcoords[gi.t * 2 + 1];
+        }
+
+        index_offset += obj->face_vertices[i];
+    }
+
+    assert(vertex_offset == index_offset);
+
+    fast_obj_destroy(obj);
+
+    return vertices;
+}
+
 int main(int argc, char* argv[])
 {
     (void) argc, argv;
@@ -761,28 +817,18 @@ int main(int argc, char* argv[])
     VkPhysicalDeviceMemoryProperties memProps;
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProps);
 
+    size_t vertices_size = 0;
+    Vertex* vertices = loadObj("data/kitten.obj", &vertices_size);
+
+    size_t vertex_count = vertices_size / sizeof(Vertex);
+
     Buffer vb = {0};
     createBuffer(&vb, device, &memProps, 128 * 1024 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 
-    Buffer ib = {0};
-    createBuffer(&ib, device, &memProps, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    // Buffer ib = {0};
+    // createBuffer(&ib, device, &memProps, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
-    static const Vertex vertices[] =
-    {
-        {{-0.5f, -0.5f, 0.0f}, {0}, {0}},
-        {{ 0.5f, -0.5f, 0.0f}, {0}, {0}},
-        {{-0.5f,  0.5f, 0.0f}, {0}, {0}},
-        {{ 0.5f,  0.5f, 0.0f}, {0}, {0}},
-    };
-
-    static const unsigned int indices[] =
-    {
-        0, 1, 2,
-        1, 2, 3,
-    };
-
-    memcpy(vb.data, vertices, sizeof(vertices));
-    memcpy(ib.data, indices, sizeof(indices));
+    memcpy(vb.data, vertices, vertices_size);
 
     glfwShowWindow(window);
 
@@ -837,8 +883,10 @@ int main(int argc, char* argv[])
 
         VkDeviceSize dummyOffset = 0;
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vb.buffer, &dummyOffset);
-        vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(commandBuffer, countof(indices), 1, 0, 0, 0);
+        /* vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(commandBuffer, countof(indices), 1, 0, 0, 0); */
+
+        vkCmdDraw(commandBuffer, (uint32_t) vertex_count, 1, 0, 0);
 
         vkCmdEndRenderPass(commandBuffer);
 
@@ -875,7 +923,7 @@ int main(int argc, char* argv[])
         VK_CHECK(vkDeviceWaitIdle(device));
     }
 
-    destroyBuffer(device, &ib);
+    /* destroyBuffer(device, &ib); */
     destroyBuffer(device, &vb);
 
     vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
