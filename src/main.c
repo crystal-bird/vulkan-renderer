@@ -99,11 +99,6 @@ VkBool32 VKAPI_CALL debugReportCallback(
 
     printf("[%s]: %s\n", type, pMessage);
 
-#ifdef _WIN32
-    OutputDebugStringA(type);
-    OutputDebugStringA(pMessage);
-#endif
-
     if (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT)
         assert(!"Validation error encountered!");
 
@@ -222,7 +217,9 @@ VkShaderModule loadShader(VkDevice device, const char* path)
     assert(buf);
 
     size_t rc = fread(buf, 1, len, file);
-    assert(rc == (size_t) len);
+    if (rc != len)
+        assert(!"Failed to read file");
+    
     fclose(file);
 
     const VkShaderModuleCreateInfo createInfo =
@@ -612,6 +609,7 @@ int main(int argc, char* argv[])
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    
     GLFWwindow* window = glfwCreateWindow(1600, 900, "Vulkan Renderer", 0, 0);
     assert(window);
 
