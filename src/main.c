@@ -38,6 +38,7 @@ VkInstance createInstance(void)
     static const char* extensions[] =
     {
         VK_KHR_SURFACE_EXTENSION_NAME,
+        VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
 
 #ifdef VK_USE_PLATFORM_WIN32_KHR
         VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
@@ -187,6 +188,7 @@ VkDevice createDevice(VkPhysicalDevice physicalDevice, uint32_t familyIndex)
     static const char* extensions[] =
     {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
     };
 
     const VkDeviceCreateInfo createInfo =
@@ -238,11 +240,39 @@ VkShaderModule loadShader(VkDevice device, const char* path)
     return shaderModule;
 }
 
-VkPipelineLayout createPipelineLayout(VkDevice device)
+VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device)
+{
+        const VkDescriptorSetLayoutBinding setBindings[] =
+    {
+        {
+            .binding = 0,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+        }
+    };
+
+    const VkDescriptorSetLayoutCreateInfo setCreateInfo =
+    {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR,
+        .bindingCount = countof(setBindings),
+        .pBindings = setBindings,
+    };
+
+    VkDescriptorSetLayout setLayout = 0;
+    VK_CHECK(vkCreateDescriptorSetLayout(device, &setCreateInfo, 0, &setLayout));
+
+    return setLayout;
+}
+
+VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout setLayout)
 {
     const VkPipelineLayoutCreateInfo createInfo =
     {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &setLayout,
     };
 
     VkPipelineLayout layout = 0;
@@ -332,39 +362,9 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache pipelineCache
         },
     };
 
-    const VkVertexInputBindingDescription stream =
-    {
-        .binding = 0,
-        .stride = sizeof(Vertex),
-        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
-    };
-
-    const VkVertexInputAttributeDescription attrs[] =
-    {
-        {
-            .location = 0,
-            .format = VK_FORMAT_R32G32B32_SFLOAT,
-            .offset = offsetof(Vertex, position),
-        },
-        {
-            .location = 1,
-            .format = VK_FORMAT_R32G32B32_SFLOAT,
-            .offset = offsetof(Vertex, normal),
-        },
-        {
-            .location = 2,
-            .format = VK_FORMAT_R32G32_SFLOAT,
-            .offset = offsetof(Vertex, texcoord),
-        },
-    };
-
     const VkPipelineVertexInputStateCreateInfo vertexInput =
     {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        .vertexBindingDescriptionCount = 1,
-        .pVertexBindingDescriptions = &stream,
-        .vertexAttributeDescriptionCount = countof(attrs),
-        .pVertexAttributeDescriptions = attrs,
     };
 
     const VkPipelineInputAssemblyStateCreateInfo inputAssembly =
@@ -779,7 +779,10 @@ int main(int argc, char* argv[])
     // TODO: this is critical for performance!
     VkPipelineCache pipelineCache = 0;
 
-    VkPipelineLayout triangleLayout = createPipelineLayout(device);
+    VkDescriptorSetLayout setLayout = createDescriptorSetLayout(device);
+    assert(setLayout);
+
+    VkPipelineLayout triangleLayout = createPipelineLayout(device, setLayout);
     assert(triangleLayout);
 
     VkPipeline trianglePipeline = createGraphicsPipeline(device, pipelineCache, renderPass, triangleVS, triangleFS, triangleLayout);
@@ -823,12 +826,12 @@ int main(int argc, char* argv[])
     size_t vertex_count = vertices_size / sizeof(Vertex);
 
     Buffer vb = {0};
-    createBuffer(&vb, device, &memProps, 128 * 1024 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-
-    // Buffer ib = {0};
-    // createBuffer(&ib, device, &memProps, 128 * 1024 * 1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    createBuffer(&vb, device, &memProps, 128 * 1024 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 
     memcpy(vb.data, vertices, vertices_size);
+
+    PFN_vkCmdPushDescriptorSetKHR vkCmdPushDescriptorSetKHR =
+        (PFN_vkCmdPushDescriptorSetKHR)vkGetInstanceProcAddr(instance, "vkCmdPushDescriptorSetKHR");
 
     glfwShowWindow(window);
 
@@ -881,10 +884,25 @@ int main(int argc, char* argv[])
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-        VkDeviceSize dummyOffset = 0;
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vb.buffer, &dummyOffset);
-        /* vkCmdBindIndexBuffer(commandBuffer, ib.buffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(commandBuffer, countof(indices), 1, 0, 0, 0); */
+        const VkDescriptorBufferInfo bufferInfo =
+        {
+            .buffer = vb.buffer,
+            .offset = 0,
+            .range = vb.size,
+        };
+
+        const VkWriteDescriptorSet descriptors[] =
+        {
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstBinding = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &bufferInfo,
+            },
+        };
+
+        vkCmdPushDescriptorSetKHR(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, triangleLayout, 0, countof(descriptors), descriptors);
 
         vkCmdDraw(commandBuffer, (uint32_t) vertex_count, 1, 0, 0);
 
@@ -936,6 +954,7 @@ int main(int argc, char* argv[])
 
     vkDestroyPipeline(device, trianglePipeline, 0);
     vkDestroyPipelineLayout(device, triangleLayout, 0);
+    vkDestroyDescriptorSetLayout(device, setLayout, 0);
     vkDestroyShaderModule(device, triangleFS, 0);
     vkDestroyShaderModule(device, triangleVS, 0);
 
